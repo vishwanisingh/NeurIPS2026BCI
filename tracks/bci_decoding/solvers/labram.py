@@ -1,4 +1,4 @@
-"""Frozen LaBraM-Base features with a trainable linear BCI classifier.
+"""Configurable LaBraM-Base BCI solver with optional W&B experiment tracking.
 
 Training uses the official LaBraM source and checkpoint from
 ``~/.cache/labram/LaBraM`` (or ``LABRAM_ROOT``). Exported weights are a
@@ -137,27 +137,33 @@ class LaBraMProbe(nn.Module):
             import wandb
         except ImportError:
             return
-        run = wandb.init(
-            project=os.environ.get("WANDB_PROJECT", "neurips-eeg-2026-bci"),
-            id=run_id,
-            resume="allow",
-            reinit=True,
-        )
-        run.log({f"evaluation/{key}": value for key, value in metrics.items()})
+        run = wandb.run
+        if run is None or run.id != run_id:
+            run = wandb.init(
+                project=os.environ.get("WANDB_PROJECT", "neurips-eeg-2026-bci"),
+                id=run_id,
+                resume="allow",
+                reinit="finish_previous",
+            )
+        run.define_metric("evaluation_step")
+        run.define_metric("evaluation/*", step_metric="evaluation_step")
+        run.log({
+            "evaluation_step": 0,
+            **{f"evaluation/{key}": value for key, value in metrics.items()},
+        })
         run.finish()
 
 
 class Solver(CompetSolver):
 
     name = "LaBraM"
-    requirements = ["pip::timm==0.4.12"]
+    requirements = ["pip::timm==0.4.12", "pip::wandb"]
     parameters = {
         "strategy": ["probe", "last_block", "full", "scratch"],
         "n_shot": [0, 5, 10],
     }
 
     def set_objective(self, train_loader, **meta):
-        self._original_name = self.name
         self._shot_label = "all" if self.n_shot == 0 else str(self.n_shot)
         self.name = f"LaBraM-{self.strategy}-shot{self._shot_label}"
         super().set_objective(train_loader, **meta)
@@ -172,6 +178,11 @@ class Solver(CompetSolver):
             return _TorchScriptPredictor(
                 torch.jit.load(str(weights), map_location=self.device)
             )
+
+        seed = int(os.environ.get("LABRAM_SEED", torch.initial_seed()))
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
         encoder = _create_encoder(meta, pretrained=self.strategy != "scratch")
         for parameter in encoder.parameters():
@@ -197,6 +208,7 @@ class Solver(CompetSolver):
 
     def fit(self, model, train_loader):
         run = self._start_wandb(model)
+        completed = False
         try:
             X_train, y_train = self._training_examples(train_loader)
             loss_fn = nn.CrossEntropyLoss()
@@ -204,10 +216,12 @@ class Solver(CompetSolver):
                 self._fit_probe(model, X_train, y_train, loss_fn, run)
             else:
                 self._fine_tune(model, X_train, y_train, loss_fn, run)
+            completed = True
         finally:
             if run is not None:
                 model.wandb_run_id = run.id
-                run.finish()
+                if not completed:
+                    run.finish()
 
     def _training_examples(self, train_loader):
         signals, labels = [], []
@@ -339,26 +353,8 @@ class Solver(CompetSolver):
                 "sfreq": self.meta["sfreq"],
                 "seed": seed,
             },
-            reinit=True,
+            reinit="finish_previous",
         )
-
-    @staticmethod
-    def log_evaluation(model, metrics):
-        run_id = getattr(model, "wandb_run_id", None)
-        if run_id is None or os.environ.get("WANDB_MODE", "online").lower() == "disabled":
-            return
-        try:
-            import wandb
-        except ImportError:
-            return
-        run = wandb.init(
-            project=os.environ.get("WANDB_PROJECT", "neurips-eeg-2026-bci"),
-            id=run_id,
-            resume="allow",
-            reinit=True,
-        )
-        run.log({f"evaluation/{key}": value for key, value in metrics.items()})
-        run.finish()
 
     def save_model(self, model, path):
         model.eval()

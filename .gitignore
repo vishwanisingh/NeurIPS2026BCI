@@ -10,6 +10,7 @@ warmup_phase/*
 **/outputs/
 **/__cache__/
 **/data/
+wandb/
 *.egg-info/
 bundle_*.zip
 solution/**/*.npz
@@ -17,5 +18,5 @@ worktrees/
 .venv-margaret/
 debug_submissions/
 tracks/*/solvers/*.npz
-.claude/
+.claude/    
 nm000290_v1.0.0/
