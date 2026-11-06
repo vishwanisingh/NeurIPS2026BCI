@@ -13,3 +13,9 @@ warmup_phase/*
 *.egg-info/
 bundle_*.zip
 solution/**/*.npz
+worktrees/
+.venv-margaret/
+debug_submissions/
+tracks/*/solvers/*.npz
+.claude/
+nm000290_v1.0.0/
