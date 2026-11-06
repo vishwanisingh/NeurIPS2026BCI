@@ -97,7 +97,7 @@ def _create_encoder(meta, pretrained=True):
     return encoder
 
 
-class LaBraMProbe(nn.Module):
+class LaBraMModel(nn.Module):
     """LaBraM window classifier with a selectable trainable encoder scope."""
 
     def __init__(self, encoder, input_chans, n_chans, n_classes, device):
@@ -196,7 +196,7 @@ class Solver(CompetSolver):
         elif self.strategy != "probe":
             raise ValueError(f"Unknown LaBraM strategy: {self.strategy}")
 
-        model = LaBraMProbe(
+        model = LaBraMModel(
             encoder=encoder,
             input_chans=_input_channels(meta["ch_names"]),
             n_chans=meta["n_chans"],
