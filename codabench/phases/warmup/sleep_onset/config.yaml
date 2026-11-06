@@ -1,0 +1,19 @@
+# Phase config — sleep_onset, warm-up phase.
+# A native `benchopt run --config` file; the extra `scoring` key is read
+# by the scoring program (stripped by ingestion before the run).
+dataset:
+  # Warm-up set: the 40 test recordings of the public Muse data
+  # (Interaxon2026Muse, NEMAR nm000287), staged in /data by the worker
+  # provisioning from this very file. subset=full: the task builds its split
+  # at runtime (a Chain around the supplied split), so subset=test does not
+  # apply and the whole study is staged. Dataloader workers default to 0
+  # (in-process); on a worker with spare cores, raise them here:
+  # `- Interaxon2026Muse[num_workers=4,subset=full]`.
+  - Interaxon2026Muse[subset=full]
+seed: 42
+no_timeout: true
+scoring:
+  columns:
+    wbmae_recording_mean: objective_wbmae_recording_mean
+    bmae: objective_bmae
+    mae: objective_mae

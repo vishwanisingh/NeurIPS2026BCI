@@ -1,0 +1,39 @@
+import os
+
+import pytest
+
+# The real dataset's pip stack (neuralset/neuralbench) pins a CUDA torch
+# build — installing it exceeds the CI runners' disk, and the Muse download
+# is too large for CI anyway. Use ``benchopt install`` locally / on a compute
+# node instead.
+HEAVY_DATASETS = ("interaxon2026muse",)
+
+
+def check_test_dataset_install(dataset_class):
+    """Hook to skip dataset install test cases in benchopt tests."""
+    if dataset_class.name.lower() in HEAVY_DATASETS:
+        pytest.skip("real-data stack is too heavy for CI runners")
+
+
+def check_test_dataset_get_data(dataset_class):
+    """Hook to skip dataset test cases in benchopt tests."""
+    if dataset_class.name.lower() in HEAVY_DATASETS:
+        pytest.skip("the Muse download is too large for CI")
+
+
+def check_test_solver_install(solver_class):
+    """Hook to skip solver install test cases in benchopt tests."""
+    if any(k in solver_class.name.lower() for k in ("eegnet", "reve")):
+        # pip braindecode pulls a CUDA torchaudio that cannot load against
+        # the CPU torch of the CI env; exercised on the cluster instead.
+        pytest.skip("braindecode/torchaudio stack unavailable on CI runners")
+
+
+def check_test_solver_run(solver_class, test_dataset_name, tmp_path):
+    """Hook to skip solver test cases in benchopt tests."""
+    if "reve" in solver_class.name.lower():
+        # REVE needs a >=1s window and its pretrained-weights download — too
+        # heavy for CI; exercised on a compute node instead.
+        pytest.skip("REVE probe runs on the cluster, not CI")
+    # Test-trained weights go to a throwaway dir, not the real outputs/.
+    os.environ["COMPET_SUBMISSION_DIR"] = str(tmp_path)

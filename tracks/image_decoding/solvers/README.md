@@ -1,0 +1,30 @@
+# Track 01 baselines
+
+Five references, each a benchopt solver *and* a valid submission:
+
+| Solver | Name | What it shows |
+|---|---|---|
+| `mean_embedding.py` | `MeanEmbedding` | the contract with no weights and no training — the retrieval floor |
+| `mean_ridge.py` | `Mean-Ridge` | a scikit-learn model; `save_model` writes a joblib dump |
+| `torch_linear.py` | `Torch-Linear` | the same model in PyTorch, with its own Adam loop in `fit` |
+| `eegnet_clip.py` | `EEGNet-CLIP` | braindecode EEGNet trained with a CLIP retrieval loss, end-to-end |
+| `reve_probe.py` | `REVE` | frozen pretrained REVE plus a multi-output ridge head saved with joblib |
+
+Run them like any solver from `tracks/image_decoding` folder, or compare against yours:
+
+```bash
+# Inference only on simulated
+benchopt run --config starter.yml -s MeanEmbedding -s Mean-Ridge
+
+# Training a model with name MyModel
+benchopt run --config training.yml -s MyModel
+```
+
+Selectors are case-insensitive globs, so `-s "*linear*"` or `-s "eegnet*"`
+also work, as well as paths to a submission compatible python file.
+
+Training through benchopt writes each trained submission to its own folder
+`outputs/<Solver.name>/` (`submission.py` + weights) — re-run the solver to
+test it, or zip that folder to upload. `tools/make_starting_kit.py` packages
+each solver as an example ZIP, pulling weights from that folder when present
+and shipping it untrained otherwise.

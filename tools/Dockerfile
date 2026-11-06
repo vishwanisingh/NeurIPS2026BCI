@@ -1,0 +1,73 @@
+# One image for the 4 track competitions and both phases: it carries the
+# environment and the two programs (for local runs). The benchmark and its
+# shared benchmark_utils travel in the phase bundle mounted on
+# /app/input_data, which is what lets one image serve every track.
+#
+#     docker build -f tools/Dockerfile -t <registry>/neural-compet:v2 .
+#
+# The same image serves the Codabench workers and the participants:
+#
+#     # stage a phase's data into a host folder (organizers: the folder
+#     # later bind-mounted as /app/data for the scoring runs)
+#     docker run -v <host-data>:/app/data -v <phase-bundle>:/app/input_data \
+#         <image> benchopt prepare /app/input_data/benchmark \
+#             --config /app/input_data/config.yaml
+#
+#     # reproduce the platform evaluation on a submission folder
+#     docker run --gpus all -v <host-data>:/app/data \
+#         -v <phase-bundle>:/app/input_data \
+#         -v <submission>:/app/ingested_program -v <results>:/app/output \
+#         <image> python3 /compet/ingestion_program/ingestion.py
+# Python 3.12 base (neuralset needs >= 3.12; pytorch/pytorch images ship
+# 3.11). torch comes from the PyTorch wheel index (see TORCH_CHANNEL below) —
+# the wheels bundle the CUDA runtime, so GPU works through the nvidia
+# container runtime without a CUDA base image.
+FROM python:3.12-slim
+
+# The torch trio from the official PyTorch wheel index with an explicit CUDA
+# channel: cu130 includes kernels for the G7 Blackwell GPUs (sm_120) and
+# requires a compatible NVIDIA 580+ host driver. All three come from the same
+# index so their C++ ops match (a PyPI torchvision against a channel torch
+# fails at import with `torchvision::nms does not exist`).
+# Installed first so the portable pins in requirements.txt are satisfied.
+ARG TORCH_CHANNEL=cu130
+RUN pip install -U pip && pip install --no-cache-dir \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/${TORCH_CHANNEL}
+
+# All Python dependencies a submission may import (this is the participants'
+# dependency contract: no install happens at submission time).
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# REVE's pretrained weights are staged with the phase data, but its separate
+# electrode-position bank normally downloads into the container home on first
+# construction. Bake that small file into the image so inference does not
+# depend on a runtime network request.
+ENV REVE_POSITIONS_PATH=/compet/reve_positions
+RUN mkdir -p "$REVE_POSITIONS_PATH" && \
+    python -c "from braindecode.models.reve import RevePositionBank; RevePositionBank()"
+
+COPY tools/neuralbench_config.json /compet/neuralbench_config.json
+
+# The programs, for running the platform's evaluation locally.
+COPY codabench/ingestion_program /compet/ingestion_program
+COPY codabench/scoring_program /compet/scoring_program
+
+# Data is bind-mounted at /app/data — the path the Codabench compute worker
+# mounts (read-only) in every submission container. The phase bundle lands
+# on /app/input_data, benchmark included.
+ENV BENCHOPT_DATA_HOME=/app/data \
+    NEURALBENCH_CONFIG=/compet/neuralbench_config.json
+
+# Keep the participant trace to what their submission does: upstream
+# deprecations, MNE's per-file reading log and tqdm bars say nothing about a
+# submission. The data stack's own RuntimeWarnings are filtered in
+# benchmark_utils.nb_task, which can target them by module.
+ENV PYTHONWARNINGS=ignore::FutureWarning \
+    MNE_LOGGING_LEVEL=ERROR \
+    TQDM_DISABLE=1
+VOLUME /app/data
+
+# Fail the build if the data stack is incoherent.
+RUN python -c "import neuralbench, braindecode, benchopt"

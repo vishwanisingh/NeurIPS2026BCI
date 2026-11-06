@@ -1,0 +1,94 @@
+"""Zero-(EEG-)dependency simulated dataset — the always-available smoke test.
+
+Stands in for the real sleep-onset task so any model can be tested without
+downloads: each window's target is a latency ``y`` in ``[0, 600]`` s, and the
+signal encodes it learnably — the channel means drift linearly with ``y``
+(mimicking slowing activity as sleep approaches), so a linear readout on the
+window means can regress the latency above the noise floor.
+
+Only depends on numpy + torch (the benchmark's base stack), so it needs no
+EEG packages and powers ``benchopt run tracks/sleep_onset -d Simulated``
+and ``benchopt test``.
+"""
+
+import numpy as np
+from benchopt import BaseDataset
+
+from benchmark_utils.data import (
+    STANDARD_EEG_CHANNELS,
+    chs_info_from_names,
+    get_device,
+    make_loader,
+)
+
+CAP_S = 600.0
+
+# The Muse headband's four channels, the warm-up data's.
+MUSE_CHANNELS = ("TP9", "AF7", "AF8", "TP10")
+
+
+class Dataset(BaseDataset):
+
+    name = "Simulated"
+
+    requirements = []
+
+    parameters = {
+        "n_chans, n_times": [(4, 500)],
+        "n_train, n_test": [(300, 150)],
+        "sfreq": [100.0],
+    }
+
+    test_parameters = {
+        "n_chans, n_times": [(2, 100)],
+        "n_train, n_test": [(20, 10)],
+        "sfreq": [100.0],
+    }
+
+    def _make_windows(self, rng, n, slope):
+        # Latencies skewed towards late onsets (like real recordings), with
+        # the cap value present.
+        y = np.minimum(rng.exponential(scale=250.0, size=n), CAP_S)
+        X = rng.standard_normal(
+            (n, self.n_chans, self.n_times)
+        ).astype(np.float32)
+        X += (slope[:, None] * (y[:, None, None] / CAP_S)).astype(np.float32)
+        return X, y.astype(np.float32)
+
+    def prepare(self):
+        # No downloads, so nothing to prepare.
+        pass
+
+    def get_data(self):
+        rng = np.random.default_rng(self.get_seed())
+        # Per-channel drift direction; scaled above the noise floor.
+        slope = rng.standard_normal(self.n_chans) * 4.0
+        device = get_device()
+        available = MUSE_CHANNELS + tuple(
+            c for c in STANDARD_EEG_CHANNELS if c not in MUSE_CHANNELS)
+        if self.n_chans > len(available):
+            raise ValueError("simulated EEG channel count is too large")
+        ch_names = list(available[:self.n_chans])
+
+        X_tr, y_tr = self._make_windows(rng, self.n_train, slope)
+        X_te, y_te = self._make_windows(rng, self.n_test, slope)
+        # Test windows in recordings, streamed as the real task scores them
+        # (see benchmark_utils/streaming.py): a few recordings, each in time
+        # order, i.e. with its latency to N2 shrinking.
+        n_records = min(5, self.n_test)
+        record_id = np.arange(self.n_test) * n_records // self.n_test
+        order = np.lexsort((-y_te, record_id))
+        X_te, y_te = X_te[order], y_te[order]
+        onset = np.arange(self.n_test) - np.searchsorted(record_id, record_id)
+
+        return dict(
+            train_loader=make_loader(X_tr, y_tr, shuffle=True, device=device),
+            test_loader=make_loader(X_te, y_te, record_id=record_id,
+                                    onset=onset, device=device),
+            sfreq=self.sfreq,
+            ch_names=ch_names,
+            chs_info=chs_info_from_names(ch_names),
+            n_chans=self.n_chans,
+            n_times=self.n_times,
+            device=device,
+        )

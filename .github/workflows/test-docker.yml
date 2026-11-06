@@ -1,0 +1,73 @@
+# Build the Docker image (tools/Dockerfile) and evaluate every track through
+# it: mount a phase bundle on /app/input_data — the track's benchmark plus a
+# zero-download Simulated run config — and run the ingestion + scoring
+# programs, exactly as the Codabench worker would.
+#
+# One job, not one per track: the image carries no benchmark, so the tracks
+# differ only by what is mounted, and an evaluation takes seconds. Split
+# across jobs, each one paid minutes to materialize the same image.
+name: Test Docker Image
+
+on:
+    push:
+        branches: [ main ]
+    pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+    test-docker:
+        runs-on: ubuntu-latest
+        env:
+            DOCKER_IMAGE_NAME: neural-compet:ci
+        steps:
+            # The torch/CUDA layers do not fit beside the preinstalled
+            # toolchains.
+            - name: Delete huge unnecessary tools folder
+              run: |
+                rm -rf /usr/share/dotnet || true
+                sudo rm -rf /usr/local/lib/android || true
+                rm -rf /opt/ghc || true
+                sudo rm -rf /usr/local/.ghcup || true
+
+            - name: Checkout repository
+              uses: actions/checkout@v3
+
+            # Plain docker build, no buildx and no layer cache: the two pip
+            # installs take under 3 min, while exporting them to the GitHub
+            # cache took 18 and restoring them 5.6 — and building through
+            # buildx costs another 5.6 min exporting the image into dockerd.
+            - name: Docker build
+              run: |
+                docker build -f tools/Dockerfile \
+                    -t ${{ env.DOCKER_IMAGE_NAME }} .
+
+            - name: Evaluate every track's sample submission
+              run: |
+                for track in image_decoding bci_decoding sleep_onset emg_pose; do
+                    echo "::group::$track"
+                    sudo rm -rf ci_input_data ingestion_res scoring_res
+                    # A phase bundle, as the platform mounts it: the track's
+                    # benchmark (-L: its benchmark_utils is a link) plus a
+                    # Simulated-only run config — the real phase configs pull
+                    # real datasets, which have no place in CI.
+                    mkdir -p ci_input_data
+                    cp -rL "tracks/$track" ci_input_data/benchmark
+                    printf 'dataset:\n  - Simulated\nseed: 42\nno_timeout: true\n' \
+                        > ci_input_data/config.yaml
+                    docker run --rm -u root \
+                        -v "./ci_input_data":/app/input_data \
+                        -v "./solution/$track":/app/ingested_program \
+                        -v "./ingestion_res":/app/output \
+                        ${{ env.DOCKER_IMAGE_NAME }} \
+                        python3 /compet/ingestion_program/ingestion.py
+                    docker run --rm -u root \
+                        -v "./ingestion_res":/app/input/res \
+                        -v "./scoring_res":/app/output \
+                        ${{ env.DOCKER_IMAGE_NAME }} \
+                        python3 /compet/scoring_program/scoring.py
+                    echo "$track scores:"; cat scoring_res/scores.json
+                    echo "::endgroup::"
+                done

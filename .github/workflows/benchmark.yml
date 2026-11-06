@@ -1,0 +1,45 @@
+# CI for the 4 track benchmarks (tracks/<name>/), using benchopt's reusable
+# test workflow with one matrix entry per track (``benchmark_dir`` input).
+#
+# The test env stays runner-sized through benchopt's own mechanisms:
+# - the objectives declare ``requirements = {"cpu": ..., "gpu": ...}`` and the
+#   test env installs the cpu variant (conda-forge ``pytorch-cpu``);
+# - each track's ``test_config.py`` skips the install/get_data tests of the
+#   real datasets, whose pip stack pins a CUDA torch build (their runs are
+#   validated on the cluster instead).
+#
+# benchopt_dev runs against benchopt@main (1.10.x), matching the benchmarks'
+# min_benchopt_version=1.10.0. A release job (benchopt_version: latest) can be
+# added now that 1.10 is on PyPI.
+name: Benchmark
+
+on:
+  push:
+    branches:
+      - main
+  create:
+    tags:
+      - '**'
+  pull_request:
+    branches:
+      - main
+  schedule:
+    # Run every 1st of the month at 7:42am UTC.
+    - cron: '42 7 1 * *'
+
+jobs:
+  benchopt_dev:
+    strategy:
+      fail-fast: false
+      matrix:
+        track:
+          - image_decoding
+          - bci_decoding
+          - sleep_onset
+          - emg_pose
+    uses: benchopt/template_benchmark/.github/workflows/test_benchmarks.yml@main
+    with:
+      benchopt_branch: benchopt@main
+      benchmark_dir: ./tracks/${{ matrix.track }}
+  lint:
+    uses: benchopt/template_benchmark/.github/workflows/lint_benchmarks.yml@main
