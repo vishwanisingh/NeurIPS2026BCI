@@ -54,8 +54,34 @@ class CompetSolver(BaseSolver):
 
     sampling_strategy = "run_once"
 
+    def _seed_everything(self):
+        """Seed torch / NumPy / ``random`` from ``benchopt run --seed`` so
+        few-shot sampling, initialization and shuffling are reproducible.
+        The seed is shared by every solver config of one run."""
+        if getattr(self, "_run_context", None) is None:
+            return
+        import random
+
+        import numpy as np
+        import torch
+
+        seed = self.get_seed()
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)  # also seeds every CUDA device
+
+    def run_label(self, *parts):
+        """Join ``parts`` with the ``--seed`` of ``benchopt run`` into one
+        run name, e.g. ``REVE-full-shot5-seed42``."""
+        context = getattr(self, "_run_context", None)
+        seed = getattr(context, "base_seed", "")
+        if seed != "":
+            parts = (*parts, f"seed{seed}")
+        return "-".join(map(str, parts))
+
     def set_objective(self, train_loader, **meta):
         self.train_loader = train_loader
+        self._seed_everything()
         # Device the batches already live on (set by the dataset's loaders);
         # place the model there in ``load_model``.
         self.device = meta.get("device", "cpu")

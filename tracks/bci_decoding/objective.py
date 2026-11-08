@@ -87,6 +87,13 @@ class Objective(BaseObjective):
         context = info.get("context_id", np.zeros(len(y_true), np.int64))
         cells = np.stack([info["stream_id"], context], axis=1)
         cell_scores = group_scores(balanced_accuracy, y_true, y_pred, cells)
+        # Per-cell scores (sorted key order, as group_scores returns them)
+        # so runs can be compared with paired tests across cells.
+        cell_keys = np.unique(cells, axis=0)
+        per_cell = {
+            f"cell/{int(stream)}_{int(ctx)}": float(score)
+            for (stream, ctx), score in zip(cell_keys, cell_scores)
+        }
         session_scores = group_scores(balanced_accuracy, y_true, y_pred,
                                       info["stream_id"])
 
@@ -97,6 +104,7 @@ class Objective(BaseObjective):
             accuracy=float(np.mean(y_true == y_pred)),
             n_classes=self.n_classes,
             n_cells=len(cell_scores),
+            **per_cell,
         )
         log_evaluation = getattr(model, "log_evaluation", None)
         if log_evaluation is not None:
