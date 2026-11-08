@@ -165,7 +165,9 @@ class Solver(CompetSolver):
 
     def set_objective(self, train_loader, **meta):
         self._shot_label = "all" if self.n_shot == 0 else str(self.n_shot)
-        self.name = f"LaBraM-{self.strategy}-shot{self._shot_label}"
+        self.name = self.run_label(
+            "LaBraM", self.strategy, f"shot{self._shot_label}"
+        )
         super().set_objective(train_loader, **meta)
 
     def load_model(self, meta):
